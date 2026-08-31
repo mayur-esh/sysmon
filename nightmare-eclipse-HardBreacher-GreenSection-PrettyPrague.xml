@@ -1,0 +1,146 @@
+<Sysmon schemaversion="4.90">
+  <!--
+    ===========================================================================
+    Sysmon detection overlay for three publicly-dropped 0day PoCs
+    (actor: "Chaotic Eclipse" / MSNightmare), Windows 11 25H2:
+
+        PrettyPrague  - Avast/GenDigital EoP -> SAM/NTLM theft + pwd reset -> SYSTEM
+        HardBreacher  - Kaspersky Endpoint EoP -> arbitrary DLL write into System32
+        GreenSection  - NVIDIA shared-section OOB write (cross-user / dwm.exe)
+
+    Install:  sysmon64 -accepteula -i sysmon-nightmare-eclipse.xml
+    Update:   sysmon64 -c sysmon-nightmare-eclipse.xml
+    Requires Sysmon v15+ (schema 4.90). Every <Rule> is named so the RuleName
+    appears in the event and routes cleanly to SIEM.
+    ===========================================================================
+  -->
+  <HashAlgorithms>SHA256,IMPHASH</HashAlgorithms>
+  <CheckRevocation>False</CheckRevocation>
+
+  <EventFiltering>
+
+    <!-- ================= ProcessCreate (Event ID 1) ================= -->
+    <RuleGroup name="proc-create" groupRelation="or">
+      <ProcessCreate onmatch="include">
+
+        <!-- PrettyPrague IOC: the PoC's password constant on any command line -->
+        <CommandLine name="PrettyPrague-IOC-string" condition="contains">PRETTY_PRAGUE</CommandLine>
+
+        <!-- PrettyPrague SYSTEM shell: transient service (services.exe) launches conhost.exe -->
+        <Rule name="PrettyPrague-SYSTEMshell-svc-conhost" groupRelation="and">
+          <ParentImage condition="end with">\services.exe</ParentImage>
+          <Image condition="end with">\conhost.exe</Image>
+        </Rule>
+
+        <!-- AV/self-defense process spawns a shell or LOLBin (HardBreacher UI takeover, generic AV EoP) -->
+        <Rule name="AVprocess-spawns-shell" groupRelation="and">
+          <ParentImage condition="contains any">\avp.exe;\avpui.exe;\aswidsagent.exe;\avastui.exe;\avastsvc.exe;\afwserv.exe;\aswtoolssvc.exe;\norton.exe;\ns.exe</ParentImage>
+          <Image condition="contains any">\cmd.exe;\powershell.exe;\pwsh.exe;\rundll32.exe;\regsvr32.exe;\mshta.exe;\wscript.exe;\cscript.exe</Image>
+        </Rule>
+
+      </ProcessCreate>
+    </RuleGroup>
+
+    <!-- ================= ImageLoad (Event ID 7) ================= -->
+    <RuleGroup name="image-load" groupRelation="or">
+      <ImageLoad onmatch="include">
+
+        <!-- Offline-registry API: PrettyPrague parses the SAM hive via offreg.dll -->
+        <ImageLoaded name="PrettyPrague-offreg-load" condition="end with">\offreg.dll</ImageLoaded>
+
+        <!-- samlib.dll (SamiChangePasswordUser) loaded by an unexpected process = SAM pwd manipulation -->
+        <Rule name="PrettyPrague-samlib-unusual-loader" groupRelation="and">
+          <ImageLoaded condition="end with">\samlib.dll</ImageLoaded>
+          <Image condition="excludes any">\lsass.exe;\services.exe;\svchost.exe;\mmc.exe;\dsac.exe;\SystemSettings.exe;\explorer.exe;\LogonUI.exe</Image>
+        </Rule>
+
+        <!-- HardBreacher IOC -->
+        <ImageLoaded name="HardBreacher-IOC-dll" condition="end with">\MY_SNAKE_IS_SOLID.dll</ImageLoaded>
+
+        <!-- Unsigned DLL loading out of System32 = HardBreacher plant executing -->
+        <Rule name="HardBreacher-unsigned-System32-load" groupRelation="and">
+          <ImageLoaded condition="begin with">C:\Windows\System32\</ImageLoaded>
+          <Signed condition="is">false</Signed>
+        </Rule>
+
+      </ImageLoad>
+    </RuleGroup>
+
+    <!-- ================= FileCreate (Event ID 11) ================= -->
+    <RuleGroup name="file-create" groupRelation="or">
+      <FileCreate onmatch="include">
+
+        <!-- HardBreacher IOC -->
+        <TargetFilename name="HardBreacher-IOC-file" condition="end with">\MY_SNAKE_IS_SOLID.dll</TargetFilename>
+
+        <!-- Any DLL written into System32 by something other than a known servicing process -->
+        <Rule name="HardBreacher-System32-DLL-plant" groupRelation="and">
+          <TargetFilename condition="begin with">C:\Windows\System32\</TargetFilename>
+          <TargetFilename condition="end with">.dll</TargetFilename>
+          <Image condition="excludes any">\TiWorker.exe;\TrustedInstaller.exe;\msiexec.exe;\poqexec.exe;\wuauclt.exe;\CompatTelRunner.exe;\svchost.exe;\drvinst.exe;\dism.exe;\SppExtComObj.exe;\DismHost.exe</Image>
+        </Rule>
+
+      </FileCreate>
+    </RuleGroup>
+
+    <!-- ================= RawAccessRead (Event ID 9) ================= -->
+    <RuleGroup name="raw-read" groupRelation="or">
+      <RawAccessRead onmatch="include">
+        <!-- Raw volume reads are rare + high-signal for offline SAM/credential theft. Tune out backup/AV agents. -->
+        <Device name="RawDiskRead-possible-SAM-theft" condition="contains">\Device\HarddiskVolume</Device>
+      </RawAccessRead>
+    </RuleGroup>
+
+    <!-- ================= RegistryEvent (Event ID 12/13/14) ================= -->
+    <RuleGroup name="registry" groupRelation="or">
+      <RegistryEvent onmatch="include">
+
+        <!-- New service key = PrettyPrague transient GUID service -->
+        <Rule name="PrettyPrague-service-key-create" groupRelation="and">
+          <EventType condition="is">CreateKey</EventType>
+          <TargetObject condition="contains">CurrentControlSet\Services\</TargetObject>
+        </Rule>
+
+        <!-- Defensive tamper: someone turns LSA Protection back off -->
+        <Rule name="Tamper-LSA-PPL-disabled" groupRelation="and">
+          <TargetObject condition="end with">\Control\Lsa\RunAsPPL</TargetObject>
+          <Details condition="is">DWORD (0x00000000)</Details>
+        </Rule>
+
+        <!-- Defensive tamper: WDigest cleartext re-enabled -->
+        <Rule name="Tamper-WDigest-reenabled" groupRelation="and">
+          <TargetObject condition="end with">\WDigest\UseLogonCredential</TargetObject>
+          <Details condition="is">DWORD (0x00000001)</Details>
+        </Rule>
+
+      </RegistryEvent>
+    </RuleGroup>
+
+    <!-- ================= ProcessAccess (Event ID 10) ================= -->
+    <RuleGroup name="proc-access" groupRelation="or">
+      <ProcessAccess onmatch="include">
+
+        <!-- HardBreacher: hijacking the Kaspersky UI process (high-rights handle) -->
+        <Rule name="HardBreacher-access-Kaspersky-UI" groupRelation="and">
+          <TargetImage condition="contains any">\avpui.exe;\avp.exe</TargetImage>
+          <GrantedAccess condition="contains any">0x1F0FFF;0x1F1FFF;0x1FFFFF;0x143A;0x1438;0x0820;0x0800</GrantedAccess>
+        </Rule>
+
+        <!-- GreenSection: cross-process reach into the compositor -->
+        <Rule name="GreenSection-access-dwm" groupRelation="and">
+          <TargetImage condition="end with">\dwm.exe</TargetImage>
+          <GrantedAccess condition="contains any">0x1F0FFF;0x1F1FFF;0x143A;0x1438;0x0820;0x0800</GrantedAccess>
+        </Rule>
+
+      </ProcessAccess>
+    </RuleGroup>
+
+    <!-- ================= CreateRemoteThread (Event ID 8) ================= -->
+    <RuleGroup name="remote-thread" groupRelation="or">
+      <CreateRemoteThread onmatch="include">
+        <TargetImage name="Injection-into-sensitive-target" condition="contains any">\avpui.exe;\avp.exe;\dwm.exe;\lsass.exe</TargetImage>
+      </CreateRemoteThread>
+    </RuleGroup>
+
+  </EventFiltering>
+</Sysmon>
