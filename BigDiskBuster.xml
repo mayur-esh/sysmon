@@ -1,0 +1,42 @@
+<Sysmon schemaversion="4.90">
+  <HashAlgorithms>SHA256</HashAlgorithms>
+  <EventFiltering>
+
+    <RuleGroup name="proc-create" groupRelation="or">
+      <ProcessCreate onmatch="exclude" />
+    </RuleGroup>
+
+    <!-- EID 11: file creation in temp dirs and Defender staging dirs -->
+    <RuleGroup name="filecreate-include" groupRelation="or">
+      <FileCreate onmatch="include">
+        <TargetFilename name="temp_local"  condition="contains">\AppData\Local\Temp\</TargetFilename>
+        <TargetFilename name="temp_win"    condition="contains">\Windows\Temp\</TargetFilename>
+        <TargetFilename name="wd_platform" condition="contains">\Windows Defender\Platform\</TargetFilename>
+        <TargetFilename name="wd_defs"     condition="contains">\Windows Defender\Definition Updates\</TargetFilename>
+      </FileCreate>
+    </RuleGroup>
+
+    <RuleGroup name="filecreate-exclude" groupRelation="or">
+      <FileCreate onmatch="exclude">
+        <Image condition="is">C:\Windows\System32\svchost.exe</Image>
+        <Image condition="is">C:\Windows\System32\MsMpEng.exe</Image>
+        <Image condition="is">C:\Windows\servicing\TrustedInstaller.exe</Image>
+        <Image condition="is">C:\Windows\System32\msiexec.exe</Image>
+        <TargetFilename condition="end with">.tmp</TargetFilename>
+        <TargetFilename condition="end with">.log</TargetFilename>
+        <TargetFilename condition="end with">.etl</TargetFilename>
+      </FileCreate>
+    </RuleGroup>
+
+    <!-- EID 26: delete-on-close fires here. 26 not 23, no archive copies -->
+    <RuleGroup name="filedelete-include" groupRelation="or">
+      <FileDeleteDetected onmatch="include">
+        <TargetFilename name="temp_local"  condition="contains">\AppData\Local\Temp\</TargetFilename>
+        <TargetFilename name="temp_win"    condition="contains">\Windows\Temp\</TargetFilename>
+        <TargetFilename name="wd_platform" condition="contains">\Windows Defender\Platform\</TargetFilename>
+        <TargetFilename name="wd_defs"     condition="contains">\Windows Defender\Definition Updates\</TargetFilename>
+      </FileDeleteDetected>
+    </RuleGroup>
+
+  </EventFiltering>
+</Sysmon>
