@@ -6,13 +6,13 @@ My sysmon configs
 | [BigDiskBuster.xml](BigDiskBuster.xml)                                                                                       | Temp and Defender staging file create/delete     |
 | [nightmare-eclipse-HardBreacher-GreenSection-PrettyPrague.xml](nightmare-eclipse-HardBreacher-GreenSection-PrettyPrague.xml) | AV and NVIDIA PoC overlay                        |
 | [PatchTuesday-2026-10.xml](PatchTuesday-2026-10.xml)                                                                         | Microsoft Patch Tuesday, October 2026 overlay    |
-|                                                                                                                              | ([notes](PatchTuesday-2026-10.md))               |
+             
 
 Sigma rules that use these configs: [mayur-esh/sigma-rules](https://github.com/mayur-esh/sigma-rules).
 
 # Patch Tuesday, October 2026: Sysmon overlay
 
-[`PatchTuesday-2026-10.xml`](PatchTuesday-2026-10.xml) is an include-only overlay (schema 4.90, Sysmon v15+). It collects telemetry and tags it with a `RuleName`; alert in your SIEM. Sysmon runs one config at a time, so merge these RuleGroups into your baseline instead of loading this file alone.
+[`PatchTuesday-2026-10.xml`](PatchTuesday-2026-10.xml) is an include-only overlay (schema 4.90, Sysmon v15+). It collects telemetry and tags it with a `RuleName`; alert in your SIEM. Sysmon runs one config at a time, so merge these RuleGroups into your baseline instead of loading this file alone. Companion to the PenTestIT October 2026 Patch Tuesday post - https://pentestit.com/microsoft-patch-tuesday-october-2026-exploitability-and-patching-priority/
 
 | RuleName                                     | Event | CVE                                                                                                                 |
 | -------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------- |
