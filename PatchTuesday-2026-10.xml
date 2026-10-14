@@ -1,0 +1,137 @@
+<Sysmon schemaversion="4.90">
+  <!--
+    ===========================================================================
+    Sysmon detection overlay: Microsoft Patch Tuesday, October 2026
+
+        CVE-2026-96951   Windows Shell MOTW bypass (exploited, CISA KEV, due 2026-10-16)
+        CVE-2026-108398  .NET Framework WDAC bypass (publicly disclosed)
+        CVE-2026-70242, -70291, -88156, -97016, -97749
+                         Outlook RCE via Reading Pane (Critical, 9.8)
+        CVE-2026-96219 / -83869 / -96113 / -100202 / -108460 / -70147 / -70153 / -97816
+                         Network RCEs in LSASS, DNS Server, MSMQ, PostScript, OpenSSH
+        CVE-2026-70571   Exchange RCE (content conversion)
+
+    Collects the telemetry the companion Sigma rules and hunts need. It does not
+    alert by itself: route RuleName to your SIEM and alert there.
+
+    Merge note: Sysmon runs one config at a time. Merge these RuleGroups into
+    your base config (or sysmon-modular) rather than loading this file alone,
+    or you lose your baseline coverage.
+
+    Install:  sysmon64 -accepteula -i PatchTuesday-2026-10.xml
+    Update:   sysmon64 -c PatchTuesday-2026-10.xml
+    Requires Sysmon v15+ (schema 4.90). Every rule is named so the RuleName
+    appears in the event.
+    ===========================================================================
+  -->
+  <HashAlgorithms>SHA256,IMPHASH</HashAlgorithms>
+  <CheckRevocation>False</CheckRevocation>
+
+  <EventFiltering>
+
+    <!-- ================= ProcessCreate (Event ID 1) ================= -->
+    <RuleGroup name="proc-create" groupRelation="or">
+      <ProcessCreate onmatch="include">
+
+        <!-- CVE-2026-96951: script host or LOLBin launched by Explorer on a file from a download/attachment path -->
+        <Rule name="CVE-2026-96951-scripthost-from-download-path" groupRelation="and">
+          <ParentImage condition="end with">\explorer.exe</ParentImage>
+          <Image condition="contains any">\cmd.exe;\powershell.exe;\pwsh.exe;\mshta.exe;\wscript.exe;\cscript.exe;\rundll32.exe;\regsvr32.exe;\msiexec.exe;\hh.exe</Image>
+          <CommandLine condition="contains any">\Downloads\;\Content.Outlook\;\INetCache\;\AppData\Local\Temp\</CommandLine>
+        </Rule>
+
+        <!-- Outlook Reading Pane RCEs: every child of classic Outlook (low volume, alert via Sigma) -->
+        <ParentImage name="Outlook-RCE-any-child" condition="end with">\OUTLOOK.EXE</ParentImage>
+
+        <!-- Crash of a service patched this month: WerFault spawned by the faulting process -->
+        <Rule name="CriticalService-crash-WerFault" groupRelation="and">
+          <Image condition="end with">\WerFault.exe</Image>
+          <ParentImage condition="contains any">\OUTLOOK.EXE;\lsass.exe;\dns.exe;\mqsvc.exe;\spoolsv.exe;\PrintIsolationHost.exe;\EdgeTransport.exe;\vmwp.exe;\sshd.exe</ParentImage>
+        </Rule>
+
+        <!-- Network-service RCEs: these services should not start interactive tooling -->
+        <Rule name="NetworkService-spawns-shell" groupRelation="and">
+          <ParentImage condition="contains any">\dns.exe;\mqsvc.exe;\spoolsv.exe;\PrintIsolationHost.exe;\EdgeTransport.exe;\vmwp.exe</ParentImage>
+          <Image condition="contains any">\cmd.exe;\powershell.exe;\pwsh.exe;\rundll32.exe;\regsvr32.exe;\mshta.exe;\wscript.exe;\cscript.exe;\certutil.exe;\bitsadmin.exe;\net.exe;\net1.exe;\whoami.exe</Image>
+        </Rule>
+
+        <!-- CVE-2026-70571: Exchange worker processes spawning a shell -->
+        <Rule name="CVE-2026-70571-Exchange-worker-shell" groupRelation="and">
+          <ParentCommandLine condition="contains any">MSExchange;Microsoft.Exchange.;UMWorkerProcess</ParentCommandLine>
+          <Image condition="contains any">\cmd.exe;\powershell.exe;\pwsh.exe;\rundll32.exe;\mshta.exe;\wscript.exe;\cscript.exe;\certutil.exe</Image>
+        </Rule>
+
+      </ProcessCreate>
+    </RuleGroup>
+
+    <!-- ================= NetworkConnect (Event ID 3) ================= -->
+    <RuleGroup name="network" groupRelation="or">
+      <NetworkConnect onmatch="include">
+
+        <!-- CVE-2026-100202 / -108460: all MSMQ service connections (TCP 1801). Compare peers to expected senders.
+             Matched on the process, not the port, because Sysmon can record the listening port as either
+             SourcePort or DestinationPort depending on direction. -->
+        <Image name="MSMQ-mqsvc-connection" condition="end with">\mqsvc.exe</Image>
+
+        <!-- DHCP failover (TCP 647), either side of the connection: only the configured partner should appear -->
+        <DestinationPort name="DHCP-failover-647" condition="is">647</DestinationPort>
+        <SourcePort name="DHCP-failover-647" condition="is">647</SourcePort>
+
+        <!-- CVE-2026-97816: OpenSSH for Windows server connections -->
+        <Image name="CVE-2026-97816-sshd-connection" condition="end with">\sshd.exe</Image>
+
+      </NetworkConnect>
+    </RuleGroup>
+
+    <!-- ================= ImageLoad (Event ID 7) ================= -->
+    <RuleGroup name="image-load" groupRelation="or">
+      <ImageLoad onmatch="include">
+
+        <!-- CVE-2026-108398: unsigned DLL/assembly from a user-writable path loaded by a system binary (WDAC bypass outcome) -->
+        <Rule name="CVE-2026-108398-unsigned-userpath-load" groupRelation="and">
+          <Image condition="begin with">C:\Windows\</Image>
+          <ImageLoaded condition="contains any">\Users\;\ProgramData\;\Windows\Temp\</ImageLoaded>
+          <Signed condition="is">false</Signed>
+        </Rule>
+
+      </ImageLoad>
+    </RuleGroup>
+
+    <!-- ================= FileCreate (Event ID 11) ================= -->
+    <RuleGroup name="file-create" groupRelation="or">
+      <FileCreate onmatch="include">
+
+        <!-- CVE-2026-96951: attachments Outlook writes to disk (pair with EID 15 to find files without Zone.Identifier) -->
+        <Rule name="CVE-2026-96951-outlook-attachment-write" groupRelation="and">
+          <Image condition="end with">\OUTLOOK.EXE</Image>
+          <TargetFilename condition="contains">\Content.Outlook\</TargetFilename>
+        </Rule>
+
+        <!-- CVE-2026-96951: browser downloads (pair with EID 15) -->
+        <Rule name="CVE-2026-96951-browser-download-write" groupRelation="and">
+          <Image condition="contains any">\msedge.exe;\chrome.exe;\firefox.exe;\brave.exe</Image>
+          <TargetFilename condition="contains">\Downloads\</TargetFilename>
+        </Rule>
+
+        <!-- CVE-2026-70571: script files dropped in Exchange web directories -->
+        <Rule name="CVE-2026-70571-Exchange-webdir-script-write" groupRelation="and">
+          <TargetFilename condition="contains any">\FrontEnd\HttpProxy\;\ClientAccess\;\inetpub\wwwroot\aspnet_client\</TargetFilename>
+          <TargetFilename condition="contains any">.aspx;.ashx;.asmx</TargetFilename>
+        </Rule>
+
+      </FileCreate>
+    </RuleGroup>
+
+    <!-- ================= FileCreateStreamHash (Event ID 15) ================= -->
+    <RuleGroup name="file-stream" groupRelation="or">
+      <FileCreateStreamHash onmatch="include">
+
+        <!-- CVE-2026-96951: Zone.Identifier (MOTW) streams written for attachments and downloads.
+             A file in EID 11 with no matching EID 15 here is the "missing MOTW" signal. -->
+        <TargetFilename name="CVE-2026-96951-motw-stream" condition="contains any">\Downloads\;\Content.Outlook\</TargetFilename>
+
+      </FileCreateStreamHash>
+    </RuleGroup>
+
+  </EventFiltering>
+</Sysmon>
